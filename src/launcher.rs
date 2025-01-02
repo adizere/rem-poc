@@ -1,9 +1,8 @@
-use reth::builder::{LaunchContext, LaunchNode, NodeAdapter, NodeBuilderWithComponents, NodeComponentsBuilder, NodeTypesAdapter};
-use reth_node_builder::{
-    components::NodeComponents,
-    hooks::NodeHooks,
-    node::FullNode, rpc::EthApiBuilderProvider, AddOns, ExExLauncher, NodeHandle};
 use futures::{future::Either, stream, stream_select, StreamExt};
+use reth::builder::{
+    LaunchContext, LaunchNode, NodeAdapter, NodeBuilderWithComponents, NodeComponentsBuilder,
+    NodeTypesAdapter,
+};
 use reth_beacon_consensus::{
     hooks::{EngineHooks, PruneHook, StaticFileHook},
     BeaconConsensusEngine,
@@ -14,6 +13,12 @@ use reth_engine_util::EngineMessageStreamExt;
 use reth_exex::ExExManagerHandle;
 use reth_network::{BlockDownloaderProvider, NetworkEventListenerProvider};
 use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeAddOns};
+use reth_node_builder::rpc::launch_rpc_servers;
+use reth_node_builder::setup::build_networked_pipeline;
+use reth_node_builder::{
+    components::NodeComponents, hooks::NodeHooks, node::FullNode, rpc::EthApiBuilderProvider,
+    AddOns, ExExLauncher, NodeHandle,
+};
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     exit::NodeExitFuture,
@@ -30,8 +35,6 @@ use reth_tracing::tracing::{debug, info};
 use std::sync::Arc;
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use reth_node_builder::rpc::launch_rpc_servers;
-use reth_node_builder::setup::build_networked_pipeline;
 
 use crate::chain::MalachiteChainBuilder;
 
@@ -49,7 +52,9 @@ pub struct MalachiteNodeLauncher {
 impl MalachiteNodeLauncher {
     /// Create a new instance of the default node launcher.
     pub const fn new(task_executor: TaskExecutor, data_dir: ChainPath<DataDirPath>) -> Self {
-        Self { ctx: LaunchContext::new(task_executor, data_dir) }
+        Self {
+            ctx: LaunchContext::new(task_executor, data_dir),
+        }
     }
 }
 
@@ -59,7 +64,7 @@ where
     CB: NodeComponentsBuilder<T>,
     AO: NodeAddOns<NodeAdapter<T, CB::Components>>,
     AO::EthApi:
-    EthApiBuilderProvider<NodeAdapter<T, CB::Components>> + FullEthApiServer + AddDevSigners,
+        EthApiBuilderProvider<NodeAdapter<T, CB::Components>> + FullEthApiServer + AddDevSigners,
 {
     type Node = NodeHandle<NodeAdapter<T, CB::Components>, AO>;
 
@@ -71,10 +76,19 @@ where
         let NodeBuilderWithComponents {
             adapter: NodeTypesAdapter { database },
             components_builder,
-            add_ons: AddOns { hooks, rpc, exexs: installed_exex },
+            add_ons:
+                AddOns {
+                    hooks,
+                    rpc,
+                    exexs: installed_exex,
+                },
             config,
         } = target;
-        let NodeHooks { on_component_initialized, on_node_started, .. } = hooks;
+        let NodeHooks {
+            on_component_initialized,
+            on_node_started,
+            ..
+        } = hooks;
 
         // TODO: remove tree and move tree_config and canon_state_notification_sender
         // initialization to with_blockchain_db once the engine revamp is done
@@ -128,8 +142,8 @@ where
             installed_exex,
             ctx.configs().clone(),
         )
-            .launch()
-            .await;
+        .launch()
+        .await;
 
         // create pipeline
         let network_client = ctx.components().network().fetch_client().await?;
@@ -156,8 +170,9 @@ where
         info!(target: "reth::cli", "StaticFileProducer initialized");
 
         // Configure the pipeline
-        let pipeline_exex_handle =
-            exex_manager_handle.clone().unwrap_or_else(ExExManagerHandle::empty);
+        let pipeline_exex_handle = exex_manager_handle
+            .clone()
+            .unwrap_or_else(ExExManagerHandle::empty);
         let (pipeline, client) = if ctx.is_dev() {
             info!(target: "reth::cli", "Starting Reth in dev mode");
 
@@ -178,8 +193,9 @@ where
                 ctx.components().pool().clone(),
                 consensus_engine_tx.clone(),
                 ctx.components().block_executor().clone(),
-            ).build();
-            
+            )
+            .build();
+
             // start the chain task
             ctx.task_executor().spawn_blocking(Box::pin(chain));
 
@@ -203,8 +219,7 @@ where
             ctx.task_executor().spawn(Box::pin(task));
 
             (pipeline, Either::Left(client))
-        }
-        else {
+        } else {
             let pipeline = build_networked_pipeline(
                 &ctx.toml_config().stages,
                 network_client.clone(),
@@ -235,7 +250,10 @@ where
 
         let pruner_events = pruner.events();
         info!(target: "reth::cli", prune_config=?ctx.prune_config().unwrap_or_default(), "Pruner initialized");
-        hooks.add(PruneHook::new(pruner, Box::new(ctx.task_executor().clone())));
+        hooks.add(PruneHook::new(
+            pruner,
+            Box::new(ctx.task_executor().clone()),
+        ));
 
         // Configure the consensus engine
         let (beacon_consensus_engine, beacon_engine_handle) = BeaconConsensusEngine::with_channel(
@@ -307,7 +325,7 @@ where
             jwt_secret,
             rpc,
         )
-            .await?;
+        .await?;
 
         // in dev mode we generate 20 random dev-signer accounts
         if ctx.is_dev() {
@@ -317,10 +335,11 @@ where
         // Run consensus engine to completion
         let (tx, rx) = oneshot::channel();
         info!(target: "reth::cli", "Starting consensus engine");
-        ctx.task_executor().spawn_critical_blocking("consensus engine", async move {
-            let res = beacon_consensus_engine.await;
-            let _ = tx.send(res);
-        });
+        ctx.task_executor()
+            .spawn_critical_blocking("consensus engine", async move {
+                let res = beacon_consensus_engine.await;
+                let _ = tx.send(res);
+            });
 
         if let Some(maybe_custom_etherscan_url) = ctx.node_config().debug.etherscan.clone() {
             info!(target: "reth::cli", "Using etherscan as consensus client");
@@ -346,9 +365,10 @@ where
                 rpc_server_handles.auth.clone(),
                 Arc::new(block_provider),
             );
-            ctx.task_executor().spawn_critical("etherscan consensus client", async move {
-                rpc_consensus_client.run::<T::Engine>().await
-            });
+            ctx.task_executor()
+                .spawn_critical("etherscan consensus client", async move {
+                    rpc_consensus_client.run::<T::Engine>().await
+                });
         }
 
         if let Some(rpc_ws_url) = ctx.node_config().debug.rpc_consensus_ws.clone() {
@@ -359,9 +379,10 @@ where
                 rpc_server_handles.auth.clone(),
                 Arc::new(block_provider),
             );
-            ctx.task_executor().spawn_critical("rpc consensus client", async move {
-                rpc_consensus_client.run::<T::Engine>().await
-            });
+            ctx.task_executor()
+                .spawn_critical("rpc consensus client", async move {
+                    rpc_consensus_client.run::<T::Engine>().await
+                });
         }
 
         let full_node = FullNode {

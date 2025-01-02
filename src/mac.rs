@@ -1,11 +1,11 @@
-use std::sync::Arc;
 use reth::api::FullNodeTypes;
-use reth::builder::BuilderContext;
 use reth::builder::components::ConsensusBuilder;
+use reth::builder::BuilderContext;
 use reth::primitives::{Header, SealedHeader, U256};
 use reth_chainspec::ChainSpec;
 use reth_consensus::{Consensus, ConsensusError, PostExecutionInput};
 use reth_primitives::{BlockWithSenders, SealedBlock};
+use std::sync::Arc;
 
 /// Mirrors `EthereumConsensusBuilder` except we use it to
 /// instantiate MalachiteConsensus, not AutoSealConsensus

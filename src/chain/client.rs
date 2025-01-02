@@ -34,7 +34,11 @@ impl MalachiteClient {
         trace!(target: "consensus::auto", ?request, "received headers request");
 
         let storage = self.storage.read().await;
-        let HeadersRequest { start, limit, direction } = request;
+        let HeadersRequest {
+            start,
+            limit,
+            direction,
+        } = request;
         let mut headers = Vec::new();
 
         let mut block: BlockHashOrNumber = match start {
@@ -44,7 +48,7 @@ impl MalachiteClient {
                     hash.into()
                 } else {
                     warn!(target: "consensus::auto", num, "no matching block found");
-                    return headers
+                    return headers;
                 }
             }
         };
@@ -61,7 +65,7 @@ impl MalachiteClient {
                 }
                 headers.push(header);
             } else {
-                break
+                break;
             }
         }
 
@@ -78,7 +82,7 @@ impl MalachiteClient {
             if let Some(body) = storage.bodies.get(&hash).cloned() {
                 bodies.push(body);
             } else {
-                break
+                break;
             }
         }
 

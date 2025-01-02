@@ -1,4 +1,7 @@
+use crate::chain::storage::Storage;
+use crate::chain::MalachiteChainDecision;
 use futures_util::{future::BoxFuture, FutureExt};
+use reth_auto_seal_consensus::MiningMode;
 use reth_beacon_consensus::{BeaconEngineMessage, ForkchoiceStatus};
 use reth_chainspec::ChainSpec;
 use reth_engine_primitives::EngineTypes;
@@ -16,12 +19,9 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use tracing::{debug, error, warn};
-use reth_auto_seal_consensus::MiningMode;
-use crate::chain::MalachiteChainDecision;
-use crate::chain::storage::Storage;
 
 /// Patterned after `MiningTask`
 ///
@@ -55,7 +55,8 @@ pub struct MalachiteELTask<Client, Pool: TransactionPool, Executor, Engine: Engi
     chain_rx: UnboundedReceiver<MalachiteChainDecision<<Pool as TransactionPool>::Transaction>>,
 }
 
-impl<Executor, Client, Pool: TransactionPool, Engine: EngineTypes> MalachiteELTask<Client, Pool, Executor, Engine>
+impl<Executor, Client, Pool: TransactionPool, Engine: EngineTypes>
+    MalachiteELTask<Client, Pool, Executor, Engine>
 {
     /// Creates the task
     pub fn new(
@@ -120,7 +121,7 @@ where
                 if this.queued.is_empty() {
                     // nothing to insert
                     println!("\t 2. (A) nothing to insert");
-                    break
+                    break;
                 }
 
                 let storage = this.storage.clone();
@@ -150,7 +151,10 @@ where
                         .collect();
                     let ommers = vec![];
 
-                    println!("\t 3. inside insert_task, ready to build & exec txes {:?}", transactions);
+                    println!(
+                        "\t 3. inside insert_task, ready to build & exec txes {:?}",
+                        transactions
+                    );
 
                     match storage.build_and_execute(
                         transactions.clone(),
@@ -185,29 +189,35 @@ where
                                 });
                                 debug!(target: "consensus::auto", ?state, "Sent fork choice update");
 
-                                println!("\t 4. inside inner loop: Sent fork choice update {:?}", state);
+                                println!(
+                                    "\t 4. inside inner loop: Sent fork choice update {:?}",
+                                    state
+                                );
 
                                 // response from execution client
                                 match rx.await.unwrap() {
                                     Ok(fcu_response) => {
-                                        println!("4 (b) -- .await.unwrap() returned Ok {:?}", fcu_response);
+                                        println!(
+                                            "4 (b) -- .await.unwrap() returned Ok {:?}",
+                                            fcu_response
+                                        );
                                         match fcu_response.forkchoice_status() {
                                             ForkchoiceStatus::Valid => break,
                                             ForkchoiceStatus::Invalid => {
                                                 error!(target: "consensus::auto", ?fcu_response, "Forkchoice update returned invalid response");
-                                                return None
+                                                return None;
                                             }
                                             ForkchoiceStatus::Syncing => {
                                                 debug!(target: "consensus::auto", ?fcu_response, "Forkchoice update returned SYNCING, waiting for VALID");
                                                 // wait for the next fork choice update
-                                                continue
+                                                continue;
                                             }
                                         }
                                     }
                                     Err(err) => {
                                         println!("4 (b) -- .await.unwrap() returned Err");
                                         error!(target: "consensus::auto", %err, "Autoseal fork choice update failed");
-                                        return None
+                                        return None;
                                     }
                                 }
                             }
@@ -240,7 +250,7 @@ where
                     Poll::Pending => {
                         this.insert_task = Some(fut);
                         println!("\t 6. POST-POLL returned Pending");
-                        break
+                        break;
                     }
                 }
             }
@@ -252,7 +262,7 @@ where
 }
 
 impl<Client, Pool: TransactionPool, EvmConfig: std::fmt::Debug, Engine: EngineTypes> std::fmt::Debug
-for MalachiteELTask<Client, Pool, EvmConfig, Engine>
+    for MalachiteELTask<Client, Pool, EvmConfig, Engine>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MalachiteTask").finish_non_exhaustive()

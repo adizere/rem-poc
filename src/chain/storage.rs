@@ -1,20 +1,20 @@
+use reth::primitives::{
+    eip4844::calculate_excess_blob_gas, proofs, Block, BlockBody, BlockHash, BlockHashOrNumber,
+    BlockNumber, Bloom, Header, Requests, SealedHeader, TransactionSigned, Withdrawals, B256, U256,
+};
+use reth_chainspec::{ChainSpec, EthereumHardforks};
+use reth_evm::execute::{BlockExecutionOutput, BlockExecutorProvider, Executor};
+use reth_execution_errors::{
+    BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
+};
+use reth_execution_types::ExecutionOutcome;
+use reth_provider::{BlockReaderIdExt, StateProviderFactory, StateRootProvider};
+use reth_revm::database::StateProviderDatabase;
+use reth_tracing::tracing::trace;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use reth::primitives::{
-    BlockHash, BlockHashOrNumber, BlockNumber, Header, Requests, SealedHeader, Withdrawals, B256, U256,
-    Bloom, eip4844::calculate_excess_blob_gas, proofs, Block, BlockBody, TransactionSigned
-};
-use reth_chainspec::{ChainSpec, EthereumHardforks};
-use reth_tracing::tracing::trace;
-use reth_evm::execute::{BlockExecutionOutput, BlockExecutorProvider, Executor};
-use reth_revm::database::StateProviderDatabase;
-use reth_execution_types::ExecutionOutcome;
-use reth_provider::{BlockReaderIdExt, StateProviderFactory, StateRootProvider};
-use reth_execution_errors::{
-    BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
-};
 
 /// In memory storage for the Malachite chain
 /// Largely based on `Storage` from reth `AutoSealConsensus`
@@ -36,7 +36,9 @@ impl Storage {
         };
         storage.headers.insert(header.number, header);
         storage.bodies.insert(best_hash, BlockBody::default());
-        Self { inner: Arc::new(RwLock::new(storage)) }
+        Self {
+            inner: Arc::new(RwLock::new(storage)),
+        }
     }
 
     /// Returns the write lock of the storage
@@ -72,7 +74,9 @@ pub(crate) struct StorageInner {
 impl StorageInner {
     /// Returns the block hash for the given block number if it exists.
     pub(crate) fn block_hash(&self, num: u64) -> Option<BlockHash> {
-        self.hash_to_number.iter().find_map(|(k, v)| num.eq(v).then_some(*k))
+        self.hash_to_number
+            .iter()
+            .find_map(|(k, v)| num.eq(v).then_some(*k))
     }
 
     /// Returns the matching header if it exists.
@@ -162,17 +166,19 @@ impl StorageInner {
 
             let (parent_excess_blob_gas, parent_blob_gas_used) = match parent {
                 Some(parent_block)
-                if chain_spec.is_cancun_active_at_timestamp(parent_block.timestamp) =>
-                    {
-                        (
-                            parent_block.excess_blob_gas.unwrap_or_default(),
-                            parent_block.blob_gas_used.unwrap_or_default(),
-                        )
-                    }
+                    if chain_spec.is_cancun_active_at_timestamp(parent_block.timestamp) =>
+                {
+                    (
+                        parent_block.excess_blob_gas.unwrap_or_default(),
+                        parent_block.blob_gas_used.unwrap_or_default(),
+                    )
+                }
                 _ => (0, 0),
             };
-            header.excess_blob_gas =
-                Some(calculate_excess_blob_gas(parent_excess_blob_gas, parent_blob_gas_used))
+            header.excess_blob_gas = Some(calculate_excess_blob_gas(
+                parent_excess_blob_gas,
+                parent_blob_gas_used,
+            ))
         }
 
         header
@@ -194,14 +200,19 @@ impl StorageInner {
         Executor: BlockExecutorProvider,
         Provider: StateProviderFactory,
     {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
         // if shanghai is active, include empty withdrawals
-        let withdrawals =
-            chain_spec.is_shanghai_active_at_timestamp(timestamp).then_some(Withdrawals::default());
+        let withdrawals = chain_spec
+            .is_shanghai_active_at_timestamp(timestamp)
+            .then_some(Withdrawals::default());
         // if prague is active, include empty requests
-        let requests =
-            chain_spec.is_prague_active_at_timestamp(timestamp).then_some(Requests::default());
+        let requests = chain_spec
+            .is_prague_active_at_timestamp(timestamp)
+            .then_some(Requests::default());
 
         let header = self.build_header_template(
             timestamp,
@@ -219,13 +230,17 @@ impl StorageInner {
             withdrawals: withdrawals.clone(),
             requests: requests.clone(),
         }
-            .with_recovered_senders()
-            .ok_or(BlockExecutionError::Validation(BlockValidationError::SenderRecoveryError))?;
+        .with_recovered_senders()
+        .ok_or(BlockExecutionError::Validation(
+            BlockValidationError::SenderRecoveryError,
+        ))?;
 
         trace!(target: "consensus::auto", transactions=?&block.body, "executing transactions");
 
         let mut db = StateProviderDatabase::new(
-            provider.latest().map_err(InternalBlockExecutionError::LatestBlock)?,
+            provider
+                .latest()
+                .map_err(InternalBlockExecutionError::LatestBlock)?,
         );
 
         // execute the block
@@ -235,7 +250,9 @@ impl StorageInner {
             requests: block_execution_requests,
             gas_used,
             ..
-        } = executor.executor(&mut db).execute((&block, U256::ZERO).into())?;
+        } = executor
+            .executor(&mut db)
+            .execute((&block, U256::ZERO).into())?;
         let execution_outcome = ExecutionOutcome::new(
             state,
             receipts.into(),
@@ -247,8 +264,15 @@ impl StorageInner {
         // means we need to extract the requests from the execution output and compute the requests
         // root here
 
-        let Block { mut header, body, .. } = block.block;
-        let body = BlockBody { transactions: body, ommers, withdrawals, requests };
+        let Block {
+            mut header, body, ..
+        } = block.block;
+        let body = BlockBody {
+            transactions: body,
+            ommers,
+            withdrawals,
+            requests,
+        };
 
         trace!(target: "consensus::auto", ?execution_outcome, ?header, ?body, "executed block, calculating state root and completing header");
 
@@ -259,14 +283,19 @@ impl StorageInner {
         let receipts = execution_outcome.receipts_by_block(header.number);
 
         // update logs bloom
-        let receipts_with_bloom =
-            receipts.iter().map(|r| r.as_ref().unwrap().bloom_slow()).collect::<Vec<Bloom>>();
-        header.logs_bloom = receipts_with_bloom.iter().fold(Bloom::ZERO, |bloom, r| bloom | *r);
+        let receipts_with_bloom = receipts
+            .iter()
+            .map(|r| r.as_ref().unwrap().bloom_slow())
+            .collect::<Vec<Bloom>>();
+        header.logs_bloom = receipts_with_bloom
+            .iter()
+            .fold(Bloom::ZERO, |bloom, r| bloom | *r);
 
         // update receipts root
         header.receipts_root = {
-            let receipts_root =
-                execution_outcome.receipts_root_slow(header.number).expect("Receipts is present");
+            let receipts_root = execution_outcome
+                .receipts_root_slow(header.number)
+                .expect("Receipts is present");
 
             receipts_root
         };

@@ -1,0 +1,59 @@
+[package]
+name = "rem"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+# using v1.0.4 e24e4c7 checkout locally
+[dependencies]
+reth = { path = "../reth/bin/reth" }
+reth-auto-seal-consensus = { path = "../reth/crates/consensus/auto-seal" }
+reth-blockchain-tree = { path = "../reth/crates/blockchain-tree" }
+reth-beacon-consensus = { path = "../reth/crates/consensus/beacon" }
+reth-consensus = { path = "../reth/crates/consensus/consensus" }
+reth-consensus-debug-client = { path = "../reth/crates/consensus/debug-client" }
+reth-chainspec = { path = "../reth/crates/chainspec" }
+reth-engine-primitives = { path = "../reth/crates/engine/primitives" }
+reth-engine-util = { path = "../reth/crates/engine/util" }
+reth-evm = { path = "../reth/crates/evm" }
+reth-execution-errors = { path = "../reth/crates/evm/execution-errors" }
+reth-execution-types = { path = "../reth/crates/evm/execution-types" }
+reth-exex = { path = "../reth/crates/exex/exex" }
+reth-network = { path = "../reth/crates/net/network" }
+reth-network-p2p = { path = "../reth/crates/net/p2p" }
+reth-network-peers = { path = "../reth/crates/net/peers" }
+reth-node-api = { path = "../reth/crates/node/api" }
+reth-node-builder = { path = "../reth/crates/node/builder", features = ["test-utils"] }
+reth-node-core = { path = "../reth/crates/node/core" }
+reth-node-ethereum = { path = "../reth/crates/ethereum/node" }
+reth-node-events = { path = "../reth/crates/node/events" }
+reth-primitives = { path = "../reth/crates/primitives" }
+reth-provider = { path = "../reth/crates/storage/provider" }
+reth-revm = { path = "../reth/crates/revm" }
+reth-rpc-engine-api = { path = "../reth/crates/rpc/rpc-engine-api" }
+reth-rpc-types = { path = "../reth/crates/rpc/rpc-types" }
+reth-tasks = { path = "../reth/crates/tasks" }
+reth-tracing = { path = "../reth/crates/tracing" }
+reth-transaction-pool = { path = "../reth/crates/transaction-pool" }
+reth-stages-api = { path = "../reth/crates/stages/api" }
+reth-tokio-util = { path = "../reth/crates/tokio-util" }
+
+revm = { version = "=12.1.0", features = [
+    "std",
+    "secp256k1",
+    "blst",
+], default-features = false }
+revm-inspectors = "=0.5.5"
+revm-primitives = { version = "7.1.0", features = [
+    "std",
+], default-features = false }
+
+futures-util = "0.3.31"
+futures = "0.3"
+tokio = { version = "1.21", default-features = false }
+tokio-stream = "0.1.11"
+serde_json = "1.0.94"
+eyre = "0.6"
+tracing = "=0.1.40"
+

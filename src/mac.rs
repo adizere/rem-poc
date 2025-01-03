@@ -22,7 +22,6 @@ where
 
     // adi: probably the execution client side
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
-        println!("we are live in is_dev() mode");
         Ok(Arc::new(MalachiteConsensus::new(ctx.chain_spec())))
     }
 }

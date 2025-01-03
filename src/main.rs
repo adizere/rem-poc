@@ -23,7 +23,7 @@ use reth_node_core::args::DevArgs;
 use reth_node_core::{args::RpcServerArgs, node_config::NodeConfig};
 use reth_node_ethereum::node::EthereumAddOns;
 use reth_node_ethereum::EthereumNode;
-use reth_primitives::{b256, hex, Genesis, PooledTransactionsElement};
+use reth_primitives::Genesis;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -42,7 +42,6 @@ async fn main() -> eyre::Result<()> {
         .with_chain(custom_chain());
 
     println!("created the node config");
-    println!("introspect the node cfg {:?}", node_config.dev.block_time);
 
     let NodeHandle {
         node,
@@ -65,57 +64,14 @@ async fn main() -> eyre::Result<()> {
 
     let mut notifications = node.provider.canonical_state_stream();
 
-    // submit tx through rpc
-    let raw_tx = hex!("02f876820a28808477359400847735940082520894ab0840c0e43688012c1adb0f5e3fc665188f83d28a029d394a5d630544000080c080a0a044076b7e67b5deecc63f61a8d7913fab86ca365b344b5759d1fe3563b4c39ea019eab979dd000da04dfc72bb0377c092d30fd9e1cab5ae487de49586cc8b0090");
-
-    let ptx = PooledTransactionsElement::decode_enveloped(&mut &raw_tx[..]).unwrap();
-    println!("{:?}", ptx);
-
-    let eth_api = node.rpc_registry.eth_api();
-
-    println!("we are NOT sending any tx");
-    // let hash = eth_api.send_raw_transaction(raw_tx.into()).await?;
-
-    let expected = b256!("b1c6512f4fc202c04355fbda66755e0e344b152e633010e8fd75ecec09b63398");
-
-    // assert_eq!(hash, expected);
-    // println!("submitted transaction: {hash}");
-
-    // let tx = head.tip().transactions().next().unwrap();
-    // assert_eq!(tx.hash(), hash);
-    let head = notifications.next().await.unwrap();
-    println!(
-        "(1) head block #: {:?} / {}",
-        head.tip().block.number,
-        head.tip().block.body.len()
-    );
-
-    use tokio::time::{sleep, Duration};
-    sleep(Duration::from_secs(5)).await;
-
     loop {
         let head = notifications.next().await.unwrap();
         println!(
-            "(2) head block after 2s sleep #: {:?}, count = {}",
+            "block produced #: {:?}, tx count = {}",
             head.tip().number,
             head.tip().block.body.len()
         );
     }
-
-    println!("\tsecond try now..");
-
-    // let ptx = PooledTransactionsElement::decode_enveloped(&mut &raw_tx[..]).unwrap();
-    // println!("{:?}", ptx);
-    // println!("{:?}", ptx.clone().into_transaction());
-    // let b = ptx.into_transaction();
-    // let mut c = b.transaction.as_eip1559().unwrap().clone();
-    // c.nonce += 1;
-
-    println!("awaiting on the next notification");
-
-    // println!("submitted transaction: {:?}", notifications.poll_next());
-
-    Ok(())
 }
 
 fn custom_chain() -> Arc<ChainSpec> {

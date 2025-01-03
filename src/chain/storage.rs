@@ -8,7 +8,7 @@ use reth_execution_errors::{
     BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
 };
 use reth_execution_types::ExecutionOutcome;
-use reth_provider::{BlockReaderIdExt, StateProviderFactory, StateRootProvider};
+use reth_provider::{StateProviderFactory, StateRootProvider};
 use reth_revm::database::StateProviderDatabase;
 use reth_tracing::tracing::trace;
 use std::collections::HashMap;

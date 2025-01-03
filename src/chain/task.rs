@@ -1,17 +1,16 @@
 use crate::chain::storage::Storage;
-use crate::chain::MalachiteChainDecision;
 use futures_util::{future::BoxFuture, FutureExt};
 use reth_auto_seal_consensus::MiningMode;
 use reth_beacon_consensus::{BeaconEngineMessage, ForkchoiceStatus};
 use reth_chainspec::ChainSpec;
 use reth_engine_primitives::EngineTypes;
 use reth_evm::execute::BlockExecutorProvider;
-use reth_primitives::IntoRecoveredTransaction;
+use reth_primitives::{IntoRecoveredTransaction, TransactionSigned};
 use reth_provider::{CanonChainTracker, StateProviderFactory};
 use reth_rpc_types::engine::ForkchoiceState;
 use reth_stages_api::PipelineEvent;
 use reth_tokio_util::EventStream;
-use reth_transaction_pool::{TransactionPool, ValidPoolTransaction};
+use reth_transaction_pool::TransactionPool;
 use std::{
     collections::VecDeque,
     future::Future,
@@ -41,7 +40,7 @@ pub struct MalachiteELTask<Client, Pool: TransactionPool, Executor, Engine: Engi
     /// Pool where transactions are stored
     pool: Pool,
     /// backlog of sets of transactions ready to be mined
-    queued: VecDeque<Vec<Arc<ValidPoolTransaction<<Pool as TransactionPool>::Transaction>>>>,
+    queued: VecDeque<Vec<TransactionSigned>>,
     // TODO: ideally this would just be a sender of hashes
     to_engine: UnboundedSender<BeaconEngineMessage<Engine>>,
     /// The pipeline events to listen on
@@ -51,8 +50,8 @@ pub struct MalachiteELTask<Client, Pool: TransactionPool, Executor, Engine: Engi
     /// The legacy miner is the AutoSeal-style miner that produces blocks without consensus
     /// todo adi: This will be removed ASAP; keeping just for testing
     legacy_miner: MiningMode,
-    /// The new miner is the Malachite chain simulator that produces blocks using local consensus engine
-    chain_rx: UnboundedReceiver<MalachiteChainDecision<<Pool as TransactionPool>::Transaction>>,
+    /// The Malachite chain simulator that produces blocks using a local consensus engine
+    chain_rx: UnboundedReceiver<Vec<TransactionSigned>>,
 }
 
 impl<Executor, Client, Pool: TransactionPool, Engine: EngineTypes>
@@ -66,7 +65,7 @@ impl<Executor, Client, Pool: TransactionPool, Engine: EngineTypes>
         client: Client,
         pool: Pool,
         block_executor: Executor,
-        chain_rx: UnboundedReceiver<MalachiteChainDecision<<Pool as TransactionPool>::Transaction>>,
+        chain_rx: UnboundedReceiver<Vec<TransactionSigned>>,
     ) -> Self {
         let mode = MiningMode::interval(std::time::Duration::from_secs(1));
         Self {
@@ -102,25 +101,56 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
 
-        println!("\t 0. inside poll of MalachiteTask");
-        // let id = cx.
+        // println!("\t 0. inside poll of MalachiteTask");
 
         loop {
             //
             // todo adi: cleanup this
             //  the miner is no longer needed most likely
-            if let Poll::Ready(transactions) = this.legacy_miner.poll(&this.pool, cx) {
-                // miner returned a set of transaction that we feed to the producer
-                println!("\t 1. some ready txes {:?}", transactions);
-                this.queued.push_back(transactions);
+            // if let Poll::Ready(transactions) = this.legacy_miner.poll(&this.pool, cx) {
+            // // miner returned a set of transaction that we feed to the producer
+            //     println!("\t 1. some ready txes from the miner {:?}", transactions);
+            //     let transactions: Vec<_> = transactions
+            //         .into_iter()
+            //         .map(|tx| {
+            //             let recovered = tx.to_recovered_transaction();
+            //             recovered.into_signed()
+            //         })
+            //         .collect();
+            //     this.queued.push_back(transactions);
+            // }
+
+            println!("attempting to receive in the task");
+            if let Ok(v) = this.chain_rx.try_recv() {
+                println!("received and pushed back len={}", v.len());
+                this.queued.push_back(v);
             }
+            
+            // println!("attempting to receive in the task");
+            // match this.chain_rx.poll_recv(cx) {
+            //     Poll::Ready(os) => {
+            //         println!("\t poll was ready ready with: {:?}", os);
+            //         match os {
+            //             None => {
+            //                 panic!("channel has been closed");
+            //             }
+            //             Some(transactions) => {
+            //                 println!("\t transactions queued for later");
+            //                 this.queued.push_back(transactions);
+            //             }
+            //         }
+            //     }
+            //     Poll::Pending => {
+            //         println!("\t pending");
+            //     }
+            // }
 
             if this.insert_task.is_none() {
                 // todo adi: cleanup this
                 //  we should be finalizing blocks regularly
                 if this.queued.is_empty() {
                     // nothing to insert
-                    println!("\t 2. (A) nothing to insert");
+                    // println!("\t 2. (A) nothing to insert");
                     break;
                 }
 
@@ -135,26 +165,26 @@ where
                 let events = this.pipe_line_events.take();
                 let executor = this.block_executor.clone();
 
-                println!("\t 2. (B) SOMETHING to insert");
+                // println!("\t 2. (B) SOMETHING to insert");
 
                 // Create the mining future that creates a block, notifies the engine that drives
                 // the pipeline
                 this.insert_task = Some(Box::pin(async move {
                     let mut storage = storage.write().await;
 
-                    let transactions: Vec<_> = transactions
-                        .into_iter()
-                        .map(|tx| {
-                            let recovered = tx.to_recovered_transaction();
-                            recovered.into_signed()
-                        })
-                        .collect();
+                    // let transactions: Vec<_> = transactions
+                    //     .into_iter()
+                    //     .map(|tx| {
+                    //         let recovered = tx.to_recovered_transaction();
+                    //         recovered.into_signed()
+                    //     })
+                    //     .collect();
                     let ommers = vec![];
 
-                    println!(
-                        "\t 3. inside insert_task, ready to build & exec txes {:?}",
-                        transactions
-                    );
+                    // println!(
+                    //     "\t 3. inside insert_task, ready to build & exec txes {:?}",
+                    //     transactions
+                    // );
 
                     match storage.build_and_execute(
                         transactions.clone(),
@@ -189,18 +219,18 @@ where
                                 });
                                 debug!(target: "consensus::auto", ?state, "Sent fork choice update");
 
-                                println!(
-                                    "\t 4. inside inner loop: Sent fork choice update {:?}",
-                                    state
-                                );
+                                // println!(
+                                //     "\t 4. inside inner loop: Sent fork choice update {:?}",
+                                //     state
+                                // );
 
                                 // response from execution client
                                 match rx.await.unwrap() {
                                     Ok(fcu_response) => {
-                                        println!(
-                                            "4 (b) -- .await.unwrap() returned Ok {:?}",
-                                            fcu_response
-                                        );
+                                        // println!(
+                                        //     "4 (b) -- .await.unwrap() returned Ok {:?}",
+                                        //     fcu_response
+                                        // );
                                         match fcu_response.forkchoice_status() {
                                             ForkchoiceStatus::Valid => break,
                                             ForkchoiceStatus::Invalid => {
@@ -215,14 +245,14 @@ where
                                         }
                                     }
                                     Err(err) => {
-                                        println!("4 (b) -- .await.unwrap() returned Err");
+                                        // println!("4 (b) -- .await.unwrap() returned Err");
                                         error!(target: "consensus::auto", %err, "Autoseal fork choice update failed");
                                         return None;
                                     }
                                 }
                             }
 
-                            println!("4 (c) -- exited the inner loop");
+                            // println!("4 (c) -- exited the inner loop");
 
                             // update canon chain for rpc
                             client.set_canonical_head(new_header.clone());
@@ -234,28 +264,28 @@ where
                         }
                     }
 
-                    println!("\t 5. storage finished build_and_execute(): end of insert task: produced events {:?}", events);
+                    // println!("\t 5. storage finished build_and_execute(): end of insert task: produced events {:?}", events);
 
                     events
                 }));
             }
 
             if let Some(mut fut) = this.insert_task.take() {
-                println!("\t 6. PRE-POLL. took insert task");
+                // println!("\t 6. PRE-POLL. took insert task");
                 match fut.poll_unpin(cx) {
                     Poll::Ready(events) => {
-                        println!("\t 6. POST-POLL returned Ready {:?}", events);
+                        // println!("\t 6. POST-POLL returned Ready {:?}", events);
                         this.pipe_line_events = events;
                     }
                     Poll::Pending => {
                         this.insert_task = Some(fut);
-                        println!("\t 6. POST-POLL returned Pending");
+                        // println!("\t 6. POST-POLL returned Pending");
                         break;
                     }
                 }
             }
         }
-        println!("\t 7. end poll for task");
+        // println!("\t 7. end poll for task");
 
         Poll::Pending
     }

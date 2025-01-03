@@ -16,7 +16,7 @@ use crate::chain::context::height::BaseHeight;
 use crate::chain::context::peer_set::BasePeerSet;
 use crate::chain::context::value::BaseValue;
 use crate::chain::context::BaseContext;
-use crate::chain::decision::Decision;
+use crate::chain::decision::DecisionStep;
 
 /// The delay between each consecutive step the simulator takes.
 pub const STEP_DELAY: Duration = Duration::from_millis(200);
@@ -29,13 +29,13 @@ pub type ProposalsSender = cbc::Sender<BaseValue>;
 /// The application treats these values as Proposals.
 pub type ProposalsReceiver = cbc::Receiver<BaseValue>;
 
-/// A stream of [`Decision`]s from the point of view of the application,
-/// which sends them.
-pub type DecisionsSender = Sender<Decision>;
+/// A stream of [`DecisionStep`]s from the p.o.v of the consensus application,
+/// which sends these steps.
+pub type DecisionStepSender = Sender<DecisionStep>;
 
-/// A stream of [`Decision`]s.
-/// Each decision is a value that consensus has finalized.
-pub type DecisionsReceiver = Receiver<Decision>;
+/// A stream of [`DecisionStep`]s.
+/// Each decision step is a value that consensus has either proposed or finalized.
+pub type DecisionStepReceiver = Receiver<DecisionStep>;
 
 /// The sending side of the networking layer.
 /// Each message in the network is an [`Envelope`]s.
@@ -90,7 +90,7 @@ impl Simulator {
         Simulator,
         Vec<State<BaseContext>>, // The consensus state of peers
         ProposalsSender,         // Send proposals (inputs to the system)
-        DecisionsReceiver,       // Receive decisions (outputs of the system)
+        DecisionStepReceiver,    // Receive decisions (outputs of the system)
     ) {
         assert!(size >= 4);
         assert!(size < 25);
@@ -141,7 +141,7 @@ impl Simulator {
                 Application {
                     peer_id: peer_addr,
                     network_tx: ntx.clone(),
-                    decision_tx: dtx.clone(),
+                    decision_step_tx: dtx.clone(),
                     proposal_rx: pr.clone(),
                 },
             );

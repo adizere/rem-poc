@@ -12,7 +12,7 @@ use reth_consensus_debug_client::{DebugConsensusClient, EtherscanBlockProvider, 
 use reth_engine_util::EngineMessageStreamExt;
 use reth_exex::ExExManagerHandle;
 use reth_network::{BlockDownloaderProvider, NetworkEventListenerProvider};
-use reth_node_api::{FullNodeComponents, FullNodeTypes, NodeAddOns};
+use reth_node_api::{FullNodeTypes, NodeAddOns};
 use reth_node_builder::rpc::launch_rpc_servers;
 use reth_node_builder::setup::build_networked_pipeline;
 use reth_node_builder::{
@@ -187,7 +187,7 @@ where
             // info!(target: "reth::cli", mode=%mining_mode, "configuring dev mining mode");
 
             // adi: the server side -- or consensus client -- is built here
-            let (client, chain, mut task) = MalachiteChainBuilder::new(
+            let (client, chain, consumer, mut task) = MalachiteChainBuilder::new(
                 ctx.chain_spec(),
                 ctx.blockchain_db().clone(),
                 ctx.components().pool().clone(),
@@ -196,8 +196,9 @@ where
             )
             .build();
 
-            // start the chain task
-            ctx.task_executor().spawn_blocking(Box::pin(chain));
+            // start the chain & consumer tasks
+            ctx.task_executor().spawn(Box::pin(chain));
+            // ctx.task_executor().spawn(Box::pin(consumer));
 
             let pipeline = build_networked_pipeline(
                 &ctx.toml_config().stages,

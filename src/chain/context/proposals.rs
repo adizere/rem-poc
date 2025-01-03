@@ -20,11 +20,11 @@ pub struct BaseProposal {
 }
 
 impl BaseProposal {
-    // Todo: We should be marshaling to bytes all fields here
-    //  not just the value
+    // Todo: We should be marshaling to bytes all fields here not just the value
+    //  This is only used for signing logic, so it's fine in a proof-of-concept
     pub fn to_bytes(&self) -> [u8; size_of::<u64>()] {
-        // Serialize just the value, a u64
-        self.value.0.to_be_bytes()
+        // Serialize just the value identifier, a u64
+        self.value.id.to_be_bytes()
     }
 }
 

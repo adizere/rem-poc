@@ -14,8 +14,8 @@ use crate::chain::context::address::BasePeerAddress;
 use crate::chain::context::height::BaseHeight;
 use crate::chain::context::peer_set::BasePeerSet;
 use crate::chain::context::BaseContext;
-use crate::chain::decision::Decision;
-use crate::chain::simulator::{DecisionsSender, Envelope, NetSender, ProposalsReceiver};
+use crate::chain::decision::{Decision, DecisionStep};
+use crate::chain::simulator::{DecisionStepSender, Envelope, NetSender, ProposalsReceiver};
 
 /// An application is the deterministic state machine executing
 /// at a specific peer.
@@ -30,7 +30,7 @@ use crate::chain::simulator::{DecisionsSender, Envelope, NetSender, ProposalsRec
 /// get values to propose whenever it acts as proposer
 /// in a consensus height.
 ///
-/// (3) a [`DecisionsSender`] to communicate to the
+/// (3) a [`DecisionStepSender`] to communicate to the
 /// outside environment each [`Decision`] which
 /// this local application took.
 ///
@@ -45,7 +45,7 @@ pub struct Application {
     pub network_tx: NetSender,
 
     // Send [`Decision`]s to the environment, i.e., the [`System`].
-    pub decision_tx: DecisionsSender,
+    pub decision_step_tx: DecisionStepSender,
 
     // Receive the values that this application will propose to consensus
     pub proposal_rx: ProposalsReceiver,
@@ -138,23 +138,27 @@ impl Application {
                         })
                         .unwrap();
 
+                    let pv = ProposedValue {
+                        height: sp.height,
+                        round: sp.round,
+                        valid_round: Round::Nil,
+                        proposer: sp.proposer,
+                        value: sp.value.clone(),
+                        validity: Validity::Valid,
+                        extension: None,
+                    };
+
+                    // If it's a proposal, announce it to the environment
+                    self.decision_step_tx
+                        .send(DecisionStep::Proposed(pv.clone()))
+                        .expect("unable to communicate the next step for a decision");
+
                     // Todo: This was not intuitive to find - source of confusion
                     self.network_tx
                         .send(Envelope {
                             source: self.peer_id,
                             destination: *destination_addr,
-                            payload: Input::ProposedValue(
-                                ProposedValue {
-                                    height: sp.height,
-                                    round: sp.round,
-                                    valid_round: Round::Nil,
-                                    proposer: sp.proposer,
-                                    value: sp.value,
-                                    validity: Validity::Valid,
-                                    extension: None,
-                                },
-                                ValueOrigin::Consensus,
-                            ),
+                            payload: Input::ProposedValue(pv, ValueOrigin::Consensus),
                         })
                         .unwrap();
                 }
@@ -168,18 +172,18 @@ impl Application {
         certificate: CommitCertificate<BaseContext>,
         peer_params: &Params<BaseContext>,
     ) -> Result<Resume<BaseContext>, String> {
-        println!("decision arrived!");
-        for s in certificate.aggregated_signature.signatures.iter() {
-            println!("signature from {:?} with ext {:?}", s.address, s.extension);
-        }
+        // println!("decision arrived!");
+        // for s in certificate.aggregated_signature.signatures.iter() {
+        //     println!("signature from {:?} with ext {:?}", s.address, s.extension);
+        // }
 
         // Let the top-level system/environment know about this decision
-        self.decision_tx
-            .send(Decision {
+        self.decision_step_tx
+            .send(DecisionStep::Finalized(Decision {
                 peer: self.peer_id,
                 value_id: certificate.value_id,
                 height: certificate.height,
-            })
+            }))
             .expect("unable to send a decision");
 
         // Proceed to the next height
@@ -299,7 +303,6 @@ impl Application {
             Effect::Decide(certificate, c) => {
                 trace!("Decide");
 
-                // TODO: No need to return resume from here
                 let _ = self.handle_decide(certificate, peer_params).unwrap();
 
                 Ok(c.resume_with(()))

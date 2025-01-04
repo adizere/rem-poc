@@ -31,11 +31,11 @@ pub type ProposalsReceiver = cbc::Receiver<BaseValue>;
 
 /// A stream of [`DecisionStep`]s from the p.o.v of the consensus application,
 /// which sends these steps.
-pub type DecisionStepSender = Sender<DecisionStep>;
+pub type DecisionStepSender = tokio::sync::mpsc::UnboundedSender<DecisionStep>;
 
 /// A stream of [`DecisionStep`]s.
 /// Each decision step is a value that consensus has either proposed or finalized.
-pub type DecisionStepReceiver = Receiver<DecisionStep>;
+pub type DecisionStepReceiver = tokio::sync::mpsc::UnboundedReceiver<DecisionStep>;
 
 /// The sending side of the networking layer.
 /// Each message in the network is an [`Envelope`]s.
@@ -86,11 +86,11 @@ impl Simulator {
     /// Assumes the size of the system is >= 4 and < 25.
     pub fn new(
         size: u32,
+        dtx: DecisionStepSender,
     ) -> (
         Simulator,
         Vec<State<BaseContext>>, // The consensus state of peers
         ProposalsSender,         // Send proposals (inputs to the system)
-        DecisionStepReceiver,    // Receive decisions (outputs of the system)
     ) {
         assert!(size >= 4);
         assert!(size < 25);
@@ -103,8 +103,8 @@ impl Simulator {
         // This would be the mempool in a real application.
         let (ps, pr) = cbc::bounded(5);
 
-        // Channel on which to send/receive the decisions.
-        let (dtx, drx) = mpsc::channel();
+        // // Channel on which to send/receive the decisions.
+        // let (dtx, drx) = mpsc::channel();
 
         let mut states = vec![];
         let mut params = HashMap::new();
@@ -156,7 +156,6 @@ impl Simulator {
             },
             states,
             ps,
-            drx,
         )
     }
 

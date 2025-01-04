@@ -8,6 +8,7 @@ mod storage;
 mod task;
 
 use reth::api::EngineTypes;
+use reth::primitives::hex;
 use reth::providers::BlockReaderIdExt;
 use reth_beacon_consensus::BeaconEngineMessage;
 use reth_chainspec::ChainSpec;
@@ -20,7 +21,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
-use reth::primitives::hex;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::time::sleep;
 use tracing::error;
@@ -30,7 +30,7 @@ use crate::chain::context::address::BasePeerAddress;
 use crate::chain::context::height::BaseHeight;
 use crate::chain::context::value::BaseValue;
 use crate::chain::decision::DecisionStep;
-use crate::chain::simulator::Simulator;
+use crate::chain::simulator::{DecisionStepReceiver, DecisionStepSender, Simulator};
 use crate::chain::storage::Storage;
 use crate::chain::task::MalachiteELTask;
 
@@ -96,19 +96,15 @@ where
         } = self;
         let auto_client = MalachiteClient::new(storage.clone());
 
+        // A channel on which the Chain decisions get consumed
+        let (d_tx, d_rx) = unbounded_channel();
+
         // Create a channel on which the Chain sends to the Task new decisions
         let (chain_tx, chain_rx) = unbounded_channel();
 
-        println!("\t\t special case trial at bootstrap");
-        let tx_bytes = hex!("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9");
-        let decoded = TransactionSigned::decode_enveloped(&mut &tx_bytes[..]).unwrap();
-        let try_2 = vec![decoded];
-
-        chain_tx.send(try_2).expect("panic");
-
         // Instantiate the Malachite Chain here
         // todo adi introduce new type & spawn the task with the simulator
-        let chain: MalachiteChain<Pool> = MalachiteChain::new(pool.clone(), chain_tx.clone());
+        let chain: MalachiteChain<Pool> = MalachiteChain::new(pool.clone(), d_tx);
 
         // This is the task being polled periodically to consume every new block that the
         // Malachite chain creates.
@@ -122,7 +118,7 @@ where
             chain_rx,
         );
 
-        let consumer = MalachiteChainConsumer::new(chain_tx);
+        let consumer = MalachiteChainConsumer::new(chain_tx, d_rx);
 
         (auto_client, chain, consumer, el_task)
     }
@@ -130,237 +126,138 @@ where
 
 /// Wrapper over the malachite chain simulator, which handles block finalization
 pub struct MalachiteChain<Pool: TransactionPool> {
-    to_task: UnboundedSender<Vec<TransactionSigned>>,
     pool: Pool,
-    sleeper: tokio::time::Interval,
-    counter: usize
+    to_consumer: DecisionStepSender,
 }
 
 impl<Pool: TransactionPool> MalachiteChain<Pool> {
-    pub fn new(pool: Pool, chain_tx: UnboundedSender<Vec<TransactionSigned>>) -> Self {
+    pub fn new(pool: Pool, d_tx: DecisionStepSender) -> Self {
         Self {
-            to_task: chain_tx,
             pool,
-            sleeper: tokio::time::interval(Duration::from_secs(1)),
-            counter: 4,
+            to_consumer: d_tx,
         }
     }
 }
 
-impl<Pool: TransactionPool + std::marker::Unpin> Future for MalachiteChain<Pool> {
+impl<Pool: TransactionPool + Unpin + 'static> Future for MalachiteChain<Pool> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
 
-        let tx_bytes = hex!("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9");
-        let decoded = TransactionSigned::decode_enveloped(&mut &tx_bytes[..]).unwrap();
-
-        loop {
-            // if this.sleeper.poll_tick(_cx) == Poll::Pending {
-            //     break;
-            // }
-
-            let vtry = vec![decoded.clone(); this.counter];
-            assert_eq!(vtry.len(), this.counter);
-
-            let p = this.to_task.send(vtry);
-            println!("\t\t counter={} sent res={:?}", this.counter, p);
-
-            this.counter += 1;
-            if this.counter > 10 {
-                return Poll::Ready(())
-            }
-        }
-
-        Poll::Pending
-
         // Create a network of 4 peers
-        // let (mut n, mut states, proposals, decision_steps) = Simulator::new(4);
-        // let pool = self.pool.clone();
-        // let to_task = self.to_task.clone();
-        //
-        // // Spawn the task that produces values to be proposed
-        // tokio::spawn(async move {
-        //     // Unique identifier for every value that Malachite attempts to finalize
-        //     let mut value_counter = 0;
-        //
-        //     loop {
-        //         // Fetch the currently available transactions if any
-        //         // The chain will consume each set of transactions as consensus proposals
-        //         let txs: Vec<_> = pool
-        //             .best_transactions()
-        //             .map(|t| t.to_recovered_transaction().into_signed())
-        //             .collect();
-        //         println!(
-        //             "id={}, set size={} of transactions ready to become a proposal",
-        //             value_counter,
-        //             txs.len()
-        //         );
-        //
-        //         let value = BaseValue {
-        //             id: value_counter,
-        //             transactions: txs,
-        //         };
-        //
-        //         proposals
-        //             .send(value)
-        //             .expect("could not send new value to be proposed");
-        //
-        //         value_counter += 1;
-        //     }
-        // });
+        let (mut n, mut states, proposals) = Simulator::new(4, this.to_consumer.clone());
+        let pool = this.pool.clone();
 
-        // Spawn a thread in the background that handles decided values
-        // tokio::spawn(async move {
-        //     let mut decisions = HashMap::new();
-        //
-        //     // Busy loop, simply consume the decided heights
-        //     loop {
-        //         let res = decision_steps.recv();
-        //         match res {
-        //             Ok(d) => {
-        //                 match d {
-        //                     DecisionStep::Proposed(p) => {
-        //                         // Only insert once, index by height
-        //                         // Consider alternative indexing by p.value_id
-        //                         if !decisions.contains_key(p.height.borrow()) {
-        //                             println!("new proposal took place for height {}", p.height);
-        //                             decisions.insert(p.height, p.value);
-        //                         }
-        //                     }
-        //                     DecisionStep::Finalized(f) if f.peer.eq(&BasePeerAddress(0)) => {
-        //                         // Assumption: Consume only decisions that peer 0 has finalized
-        //                         let value = decisions.get(&f.height).unwrap();
-        //                         let txs = value.transactions.clone();
-        //
-        //                         println!("peer 0 finalized proposal height # {} with id {} and count={}, relaying to the task",
-        //                                  f.height, f.value_id, txs.len());
-        //
-        //                         // relay the newly produced value to the task
-        //                         to_task
-        //                             .send(txs)
-        //                             .expect("unable to relay the newly produced block");
-        //
-        //                         if f.height == BaseHeight(2) {
-        //                             println!("\t\t special case trial for height 2");
-        //                             let tx_bytes = hex!("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9");
-        //                             let decoded = TransactionSigned::decode_enveloped(&mut &tx_bytes[..]).unwrap();
-        //                             let try_2 = vec![decoded];
-        //
-        //                             to_task.send(try_2).expect("panic");
-        //                         }
-        //                     }
-        //                     _ => {
-        //                         // some other peer than (0) finalized, not relaying to the task
-        //                     }
-        //                 }
-        //             }
-        //             Err(err) => {
-        //                 error!(error = ?err, "error receiving decisions");
-        //                 error!("stopping");
-        //                 break;
-        //             }
-        //         }
-        //     }
-        // });
+        // Spawn the task that produces values to be proposed
+        // todo adi: fix this hack by creating instead a `spawn_critical_blocking` block
+        tokio::spawn(async move {
+            // Unique identifier for every value that Malachite attempts to finalize
+            let mut value_counter = 0;
+
+            loop {
+                // Fetch the currently available transactions if any
+                // The chain will use each set of transactions as consensus proposals
+                let txs: Vec<_> = pool
+                    .best_transactions()
+                    .map(|t| t.to_recovered_transaction().into_signed())
+                    .collect();
+                println!(
+                    "id={}, set size={} of transactions ready to become a proposal",
+                    value_counter,
+                    txs.len()
+                );
+
+                let value = BaseValue {
+                    id: value_counter,
+                    transactions: txs,
+                };
+
+                proposals
+                    .send(value)
+                    .expect("could not send new value to be proposed");
+
+                value_counter += 1;
+            }
+        });
 
         // Run the chain simulator system
         // Blocking method, starts the simulated network and handles orchestration of
         // block building
-        // n.run(&mut states);
-        //
-        // Poll::Pending
+        n.run(&mut states);
+
+        Poll::Pending
     }
 }
 
 pub struct MalachiteChainConsumer {
     to_task: UnboundedSender<Vec<TransactionSigned>>,
-    sleeper: tokio::time::Interval,
+    from_chain: DecisionStepReceiver,
 }
 
 impl MalachiteChainConsumer {
-    pub fn new(chain_tx: UnboundedSender<Vec<TransactionSigned>>) -> Self {
+    pub fn new(
+        chain_tx: UnboundedSender<Vec<TransactionSigned>>,
+        d_rx: DecisionStepReceiver,
+    ) -> Self {
         Self {
             to_task: chain_tx,
-            sleeper: tokio::time::interval(Duration::from_secs(1)),
+            from_chain: d_rx,
         }
     }
-}
 
-impl Future for MalachiteChainConsumer {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-
-        let tx_bytes = hex!("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9");
-        let decoded = TransactionSigned::decode_enveloped(&mut &tx_bytes[..]).unwrap();
-        let counter = 2;
-
-        loop {
-            if this.sleeper.poll_tick(cx) == Poll::Pending {
-                break;
-            }
-
-            let vtry = vec![decoded.clone(); counter];
-            assert_eq!(vtry.len(), counter);
-
-            let p = this.to_task.send(vtry);
-            println!("\t\t counter={} sent res={:?}", counter, p);
-        }
-
-        Poll::Pending
-
-        // let mut decisions = HashMap::new();
+    pub async fn run(mut self) {
+        let mut decisions = HashMap::new();
 
         // Busy loop, simply consume the decided heights
-        // loop {
-        //     let res = decision_steps.recv();
-        //     match res {
-        //         Ok(d) => {
-        //             match d {
-        //                 DecisionStep::Proposed(p) => {
-        //                     // Only insert once, index by height
-        //                     // Consider alternative indexing by p.value_id
-        //                     if !decisions.contains_key(p.height.borrow()) {
-        //                         println!("new proposal took place for height {}", p.height);
-        //                         decisions.insert(p.height, p.value);
-        //                     }
-        //                 }
-        //                 DecisionStep::Finalized(f) if f.peer.eq(&BasePeerAddress(0)) => {
-        //                     // Assumption: Consume only decisions that peer 0 has finalized
-        //                     let value = decisions.get(&f.height).unwrap();
-        //                     let txs = value.transactions.clone();
-        //
-        //                     println!("peer 0 finalized proposal height # {} with id {} and count={}, relaying to the task",
-        //                              f.height, f.value_id, txs.len());
-        //
-        //                     // relay the newly produced value to the task
-        //                     self.to_task
-        //                         .send(txs)
-        //                         .expect("unable to relay the newly produced block");
-        //
-        //                     if f.height == BaseHeight(2) {
-        //                         println!("\t\t special case trial for height 2");
-        //                         let tx_bytes = hex!("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9");
-        //                         let decoded = TransactionSigned::decode_enveloped(&mut &tx_bytes[..]).unwrap();
-        //                         let try_2 = vec![decoded];
-        //
-        //                         to_task.send(try_2).expect("panic");
-        //                     }
-        //                 }
-        //                 _ => {
-        //                     // some other peer than (0) finalized, not relaying to the task
-        //                 }
-        //             }
-        //         }
-        //         Err(err) => {
-        //             error!(error = ?err, "error receiving decisions");
-        //             error!("stopping");
-        //             break;
-        //         }
-        //     }
-        // }
+        loop {
+            let res = self.from_chain.recv().await;
+            match res {
+                Some(d) => {
+                    match d {
+                        DecisionStep::Proposed(p) => {
+                            // Only insert once, index by height
+                            // Consider alternative indexing by p.value_id
+                            if !decisions.contains_key(p.height.borrow()) {
+                                println!("new proposal took place for height {}", p.height);
+                                decisions.insert(p.height, p.value);
+                            }
+                        }
+                        DecisionStep::Finalized(f) if f.peer.eq(&BasePeerAddress(0)) => {
+                            // Assumption: Consume only decisions that peer 0 has finalized
+                            let value = decisions.get(&f.height).unwrap();
+                            let txs = value.transactions.clone();
+
+                            println!("peer 0 finalized proposal height # {} with id {} and count={}, relaying to the task",
+                                             f.height, f.value_id, txs.len());
+
+                            // relay the newly produced value to the task
+                            self.to_task
+                                .send(txs)
+                                .expect("unable to relay the newly produced block");
+
+                            if f.height == BaseHeight(2) {
+                                println!("\t\t special case trial for height 2");
+                                let tx_bytes = hex!("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9");
+                                let decoded =
+                                    TransactionSigned::decode_enveloped(&mut &tx_bytes[..])
+                                        .unwrap();
+                                let try_2 = vec![decoded];
+
+                                self.to_task.send(try_2).expect("panic");
+                            }
+                        }
+                        _ => {
+                            // some other peer than (0) finalized, not relaying to the task
+                        }
+                    }
+                }
+                None => {
+                    error!("error receiving decisions");
+                    error!("stopping");
+                    break;
+                }
+            }
+        }
     }
 }

@@ -104,46 +104,13 @@ where
         // println!("\t 0. inside poll of MalachiteTask");
 
         loop {
-            //
-            // todo adi: cleanup this
-            //  the miner is no longer needed most likely
-            // if let Poll::Ready(transactions) = this.legacy_miner.poll(&this.pool, cx) {
-            // // miner returned a set of transaction that we feed to the producer
-            //     println!("\t 1. some ready txes from the miner {:?}", transactions);
-            //     let transactions: Vec<_> = transactions
-            //         .into_iter()
-            //         .map(|tx| {
-            //             let recovered = tx.to_recovered_transaction();
-            //             recovered.into_signed()
-            //         })
-            //         .collect();
-            //     this.queued.push_back(transactions);
-            // }
-
             println!("attempting to receive in the task");
-            if let Ok(v) = this.chain_rx.try_recv() {
+            if let Poll::Ready(v) = this.chain_rx.poll_recv(cx) {
+                println!("poll recv done in the task");
+                let v = v.unwrap();
                 println!("received and pushed back len={}", v.len());
                 this.queued.push_back(v);
             }
-            
-            // println!("attempting to receive in the task");
-            // match this.chain_rx.poll_recv(cx) {
-            //     Poll::Ready(os) => {
-            //         println!("\t poll was ready ready with: {:?}", os);
-            //         match os {
-            //             None => {
-            //                 panic!("channel has been closed");
-            //             }
-            //             Some(transactions) => {
-            //                 println!("\t transactions queued for later");
-            //                 this.queued.push_back(transactions);
-            //             }
-            //         }
-            //     }
-            //     Poll::Pending => {
-            //         println!("\t pending");
-            //     }
-            // }
 
             if this.insert_task.is_none() {
                 // todo adi: cleanup this

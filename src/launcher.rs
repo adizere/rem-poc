@@ -197,8 +197,13 @@ where
             .build();
 
             // start the chain & consumer tasks
-            ctx.task_executor().spawn(Box::pin(chain));
-            // ctx.task_executor().spawn(Box::pin(consumer));
+            ctx.task_executor().spawn_blocking(Box::pin(chain));
+            ctx.task_executor().spawn_critical_blocking(
+                "malachite consumer",
+                Box::pin(async move {
+                    consumer.run().await;
+                }),
+            );
 
             let pipeline = build_networked_pipeline(
                 &ctx.toml_config().stages,
@@ -217,7 +222,8 @@ where
             let pipeline_events = pipeline.events();
             task.set_pipeline_events(pipeline_events);
             debug!(target: "reth::cli", "Spawning auto mine task");
-            ctx.task_executor().spawn(Box::pin(task));
+            ctx.task_executor()
+                .spawn_critical("mining task", Box::pin(task));
 
             (pipeline, Either::Left(client))
         } else {

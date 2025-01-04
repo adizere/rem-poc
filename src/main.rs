@@ -12,10 +12,11 @@ mod mac;
 use crate::launcher::MalachiteNodeLauncher;
 use crate::mac::MalachiteConsensusBuilder;
 use futures_util::StreamExt;
-use reth::providers::BlockReader;
+use reth::primitives::{b256, hex};
 use reth::{
     builder::{NodeBuilder, NodeHandle},
     providers::CanonStateSubscriptions,
+    rpc::api::eth::helpers::EthTransactions,
     tasks::TaskManager,
 };
 use reth_chainspec::ChainSpec;
@@ -57,17 +58,24 @@ async fn main() -> eyre::Result<()> {
         })
         .await?;
 
-    // let nh = node.provider.canonical_tip();
-    let bh = BlockReader::pending_block_and_receipts(&node.provider);
-
-    println!("launched the node {:?}", bh);
-
     let mut notifications = node.provider.canonical_state_stream();
+
+    // submit tx through rpc
+    let raw_tx = hex!("02f876820a28808477359400847735940082520894ab0840c0e43688012c1adb0f5e3fc665188f83d28a029d394a5d630544000080c080a0a044076b7e67b5deecc63f61a8d7913fab86ca365b344b5759d1fe3563b4c39ea019eab979dd000da04dfc72bb0377c092d30fd9e1cab5ae487de49586cc8b0090");
+
+    let eth_api = node.rpc_registry.eth_api();
+
+    let hash = eth_api.send_raw_transaction(raw_tx.into()).await?;
+
+    let expected = b256!("b1c6512f4fc202c04355fbda66755e0e344b152e633010e8fd75ecec09b63398");
+
+    assert_eq!(hash, expected);
+    println!("main: submitted transaction with hash {hash}");
 
     loop {
         let head = notifications.next().await.unwrap();
         println!(
-            "block produced #: {:?}, tx count = {}",
+            "main: block finalized & executed: height={:?}, tx count={}",
             head.tip().number,
             head.tip().block.body.len()
         );

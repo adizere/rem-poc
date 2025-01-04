@@ -101,10 +101,7 @@ impl Simulator {
         // Crossbeam channel on which `BaseValue` proposals pass from the environment into
         // application logic.
         // This would be the mempool in a real application.
-        let (ps, pr) = cbc::bounded(5);
-
-        // // Channel on which to send/receive the decisions.
-        // let (dtx, drx) = mpsc::channel();
+        let (ps, pr) = cbc::bounded(1);
 
         let mut states = vec![];
         let mut params = HashMap::new();

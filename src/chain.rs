@@ -8,7 +8,6 @@ mod storage;
 mod task;
 
 use reth::api::EngineTypes;
-use reth::primitives::hex;
 use reth::providers::BlockReaderIdExt;
 use reth_beacon_consensus::BeaconEngineMessage;
 use reth_chainspec::ChainSpec;
@@ -20,14 +19,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Duration;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio::time::sleep;
 use tracing::error;
 
 use crate::chain::client::MalachiteClient;
 use crate::chain::context::address::BasePeerAddress;
-use crate::chain::context::height::BaseHeight;
 use crate::chain::context::value::BaseValue;
 use crate::chain::decision::DecisionStep;
 use crate::chain::simulator::{DecisionStepReceiver, DecisionStepSender, Simulator};
@@ -149,7 +145,7 @@ impl<Pool: TransactionPool + Unpin + 'static> Future for MalachiteChain<Pool> {
         let (mut n, mut states, proposals) = Simulator::new(4, this.to_consumer.clone());
         let pool = this.pool.clone();
 
-        // Spawn the task that produces values to be proposed
+        // Spawn the task that produces values to be proposed -- the block builder
         // todo adi: fix this hack by creating instead a `spawn_critical_blocking` block
         tokio::spawn(async move {
             // Unique identifier for every value that Malachite attempts to finalize
@@ -163,7 +159,7 @@ impl<Pool: TransactionPool + Unpin + 'static> Future for MalachiteChain<Pool> {
                     .map(|t| t.to_recovered_transaction().into_signed())
                     .collect();
                 println!(
-                    "proposal ready: id={}, tx count={}",
+                    "block builder: block ready id={}, tx count={}",
                     value_counter,
                     txs.len()
                 );
@@ -219,7 +215,7 @@ impl MalachiteChainConsumer {
                             // Only insert once, index by height
                             // Consider alternative indexing by p.value_id
                             if !decisions.contains_key(p.height.borrow()) {
-                                println!("new proposal took place for height {}", p.height);
+                                println!("chain consumer: block with id {} was used as a proposal at height {}", p.value.id, p.height);
                                 decisions.insert(p.height, p.value);
                             }
                         }
@@ -228,7 +224,7 @@ impl MalachiteChainConsumer {
                             let value = decisions.get(&f.height).unwrap();
                             let txs = value.transactions.clone();
 
-                            println!("peer 0 finalized proposal height # {} with id {} and count={}, relaying to the task",
+                            println!("chain consumer: finalized height # {} with block id {} and count={}, relaying to the execution task",
                                              f.height, f.value_id, txs.len());
 
                             // relay the newly produced value to the task

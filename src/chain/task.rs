@@ -1,11 +1,10 @@
 use crate::chain::storage::Storage;
 use futures_util::{future::BoxFuture, FutureExt};
-use reth_auto_seal_consensus::MiningMode;
 use reth_beacon_consensus::{BeaconEngineMessage, ForkchoiceStatus};
 use reth_chainspec::ChainSpec;
 use reth_engine_primitives::EngineTypes;
 use reth_evm::execute::BlockExecutorProvider;
-use reth_primitives::{IntoRecoveredTransaction, TransactionSigned};
+use reth_primitives::TransactionSigned;
 use reth_provider::{CanonChainTracker, StateProviderFactory};
 use reth_rpc_types::engine::ForkchoiceState;
 use reth_stages_api::PipelineEvent;
@@ -26,7 +25,7 @@ use tracing::{debug, error, warn};
 ///
 /// A Future that listens for new ready transactions and puts new blocks into storage
 ///
-/// Chain ----->--->----|----> Task <----> BeaconConsensusEngine
+/// Chain ----->--->---> Consumer --->--|----> Task <----> BeaconConsensusEngine
 ///  {consensus client} | {execution client}
 pub struct MalachiteELTask<Client, Pool: TransactionPool, Executor, Engine: EngineTypes> {
     /// The configured chain spec
@@ -47,9 +46,11 @@ pub struct MalachiteELTask<Client, Pool: TransactionPool, Executor, Engine: Engi
     pipe_line_events: Option<EventStream<PipelineEvent>>,
     /// The type used for block execution
     block_executor: Executor,
-    /// The legacy miner is the AutoSeal-style miner that produces blocks without consensus
-    /// todo adi: This will be removed ASAP; keeping just for testing
-    legacy_miner: MiningMode,
+    // The legacy miner is the AutoSeal-style miner that produces blocks without consensus
+    // Adi: This has been deprecated in this proof of concept, because we're producing blocks
+    // using Malachite simulator.
+    // https://github.com/paradigmxyz/reth/blob/f25367cffdd6a181e872deedf21e7c0ff0dc0e44/crates/consensus/auto-seal/src/task.rs#L97
+    // _legacy_miner: MiningMode,
     /// The Malachite chain simulator that produces blocks using a local consensus engine
     chain_rx: UnboundedReceiver<Vec<TransactionSigned>>,
 }
@@ -67,7 +68,6 @@ impl<Executor, Client, Pool: TransactionPool, Engine: EngineTypes>
         block_executor: Executor,
         chain_rx: UnboundedReceiver<Vec<TransactionSigned>>,
     ) -> Self {
-        let mode = MiningMode::interval(std::time::Duration::from_secs(1));
         Self {
             chain_spec,
             client,
@@ -78,7 +78,6 @@ impl<Executor, Client, Pool: TransactionPool, Engine: EngineTypes>
             queued: Default::default(),
             pipe_line_events: None,
             block_executor,
-            legacy_miner: mode,
             chain_rx,
         }
     }
@@ -100,12 +99,10 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        
+
         loop {
             if let Poll::Ready(v) = this.chain_rx.poll_recv(cx) {
-                println!("poll recv done in the task");
                 let v = v.unwrap();
-                println!("received and pushed back len={}", v.len());
                 this.queued.push_back(v);
             }
 
@@ -114,13 +111,19 @@ where
                 //  we should be finalizing blocks regularly
                 if this.queued.is_empty() {
                     // nothing to insert
-                    // println!("\t 2. (A) nothing to insert");
                     break;
                 }
 
                 let storage = this.storage.clone();
                 // todo adi: we'll function without user transactions in a first try
                 let transactions = this.queued.pop_front().expect("not empty");
+                println!(
+                    "task: executing {} transactions from the new block",
+                    transactions.len()
+                );
+                // adi note:
+                // the malachite (consensus) block is already finalized here
+                // in a real integration consider finalization <> execution interlacing
 
                 let to_engine = this.to_engine.clone();
                 let client = this.client.clone();
@@ -129,26 +132,12 @@ where
                 let events = this.pipe_line_events.take();
                 let executor = this.block_executor.clone();
 
-                // println!("\t 2. (B) SOMETHING to insert");
-
                 // Create the mining future that creates a block, notifies the engine that drives
                 // the pipeline
                 this.insert_task = Some(Box::pin(async move {
                     let mut storage = storage.write().await;
 
-                    // let transactions: Vec<_> = transactions
-                    //     .into_iter()
-                    //     .map(|tx| {
-                    //         let recovered = tx.to_recovered_transaction();
-                    //         recovered.into_signed()
-                    //     })
-                    //     .collect();
                     let ommers = vec![];
-
-                    // println!(
-                    //     "\t 3. inside insert_task, ready to build & exec txes {:?}",
-                    //     transactions
-                    // );
 
                     match storage.build_and_execute(
                         transactions.clone(),

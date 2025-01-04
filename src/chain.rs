@@ -163,7 +163,7 @@ impl<Pool: TransactionPool + Unpin + 'static> Future for MalachiteChain<Pool> {
                     .map(|t| t.to_recovered_transaction().into_signed())
                     .collect();
                 println!(
-                    "id={}, set size={} of transactions ready to become a proposal",
+                    "proposal ready: id={}, tx count={}",
                     value_counter,
                     txs.len()
                 );
@@ -235,17 +235,6 @@ impl MalachiteChainConsumer {
                             self.to_task
                                 .send(txs)
                                 .expect("unable to relay the newly produced block");
-
-                            if f.height == BaseHeight(2) {
-                                println!("\t\t special case trial for height 2");
-                                let tx_bytes = hex!("02f872018307910d808507204d2cb1827d0094388c818ca8b9251b393131c08a736a67ccb19297880320d04823e2701c80c001a0cf024f4815304df2867a1a74e9d2707b6abda0337d2d54a4438d453f4160f190a07ac0e6b3bc9395b5b9c8b9e6d77204a236577a5b18467b9175c01de4faa208d9");
-                                let decoded =
-                                    TransactionSigned::decode_enveloped(&mut &tx_bytes[..])
-                                        .unwrap();
-                                let try_2 = vec![decoded];
-
-                                self.to_task.send(try_2).expect("panic");
-                            }
                         }
                         _ => {
                             // some other peer than (0) finalized, not relaying to the task

@@ -100,11 +100,8 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-
-        // println!("\t 0. inside poll of MalachiteTask");
-
+        
         loop {
-            println!("attempting to receive in the task");
             if let Poll::Ready(v) = this.chain_rx.poll_recv(cx) {
                 println!("poll recv done in the task");
                 let v = v.unwrap();

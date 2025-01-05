@@ -28,7 +28,7 @@ use crate::chain::context::value::BaseValue;
 use crate::chain::decision::DecisionStep;
 use crate::chain::simulator::{DecisionStepReceiver, DecisionStepSender, Simulator};
 use crate::chain::storage::Storage;
-use crate::chain::task::MalachiteELTask;
+use crate::chain::task::MalachiteTask;
 
 /// Largely based on `AutoSealBuilder`
 #[derive(Debug)]
@@ -80,7 +80,7 @@ where
         MalachiteClient,
         MalachiteChain<Pool>,
         MalachiteChainConsumer,
-        MalachiteELTask<Client, Pool, EvmConfig, Engine>,
+        MalachiteTask<Client, Pool, EvmConfig, Engine>,
     ) {
         let Self {
             client,
@@ -104,7 +104,7 @@ where
 
         // This is the task being polled periodically to consume every new block that the
         // Malachite chain creates.
-        let el_task = MalachiteELTask::new(
+        let el_task = MalachiteTask::new(
             Arc::clone(&chain_spec),
             to_engine,
             storage,

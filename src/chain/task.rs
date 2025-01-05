@@ -27,7 +27,7 @@ use tracing::{debug, error, warn};
 ///
 /// Chain ----->--->---> Consumer --->--|----> Task <----> BeaconConsensusEngine
 ///  {consensus client} | {execution client}
-pub struct MalachiteELTask<Client, Pool: TransactionPool, Executor, Engine: EngineTypes> {
+pub struct MalachiteTask<Client, Pool: TransactionPool, Executor, Engine: EngineTypes> {
     /// The configured chain spec
     chain_spec: Arc<ChainSpec>,
     /// The client used to interact with the state
@@ -56,7 +56,7 @@ pub struct MalachiteELTask<Client, Pool: TransactionPool, Executor, Engine: Engi
 }
 
 impl<Executor, Client, Pool: TransactionPool, Engine: EngineTypes>
-    MalachiteELTask<Client, Pool, Executor, Engine>
+    MalachiteTask<Client, Pool, Executor, Engine>
 {
     /// Creates the task
     pub fn new(
@@ -88,7 +88,7 @@ impl<Executor, Client, Pool: TransactionPool, Engine: EngineTypes>
     }
 }
 
-impl<Executor, Client, Pool, Engine> Future for MalachiteELTask<Client, Pool, Executor, Engine>
+impl<Executor, Client, Pool, Engine> Future for MalachiteTask<Client, Pool, Executor, Engine>
 where
     Client: StateProviderFactory + CanonChainTracker + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
@@ -245,7 +245,7 @@ where
 }
 
 impl<Client, Pool: TransactionPool, EvmConfig: std::fmt::Debug, Engine: EngineTypes> std::fmt::Debug
-    for MalachiteELTask<Client, Pool, EvmConfig, Engine>
+    for MalachiteTask<Client, Pool, EvmConfig, Engine>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MalachiteTask").finish_non_exhaustive()
